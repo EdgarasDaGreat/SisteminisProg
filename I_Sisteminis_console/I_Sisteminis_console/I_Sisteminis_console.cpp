@@ -35,7 +35,7 @@ int main(int argc, char* argv[])
 
 		cout << "Number of Logical Processors: " << sysInfo.dwNumberOfProcessors << endl;
 		cout << "Page size: " << sysInfo.dwPageSize << " Bytes" << endl;
-		cout << "Processor Mask: 0x"<< hex <<sysInfo.dwActiveProcessorMask << endl;
+		cout << "Processor Mask: 0x" << hex << sysInfo.dwActiveProcessorMask << endl;
 		cout << "Minimum process address: 0x" << hex << sysInfo.lpMinimumApplicationAddress << endl;
 		cout << "Maximum process address: 0x" << hex << sysInfo.lpMaximumApplicationAddress << endl;
 	}
@@ -43,8 +43,10 @@ int main(int argc, char* argv[])
 	{
 		//rodo Windows klaidos teksta
 		//https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-formatmessage
+		//<https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499->
 
-		if(argc < 3) {
+
+		if (argc < 3) {
 			cout << "No error code provided!\n";
 			return 1;
 		}
@@ -69,13 +71,13 @@ int main(int argc, char* argv[])
 			NULL //papildomi argumentai, kuriu mes nenaudojam, tai NULL (tam rasem FORMAT_MESSAGE_IGNORE_INSERTS flaga)
 		);
 
-		cout <<errorCode<<" -> "<< string(buffer);
+		cout << errorCode << " -> " << string(buffer);
 	}
 	else if (param == "--prime")
 	{
 		//tikrina ar skaicius yra pirminis
 
-		if(argc < 3) {
+		if (argc < 3) {
 			cout << "No number specified!\n";
 			return 1;
 		}
@@ -107,7 +109,7 @@ int main(int argc, char* argv[])
 			cout << "Number " << number << " is not a prime number\n";
 		}
 	}
-	else if(param == "--encode")
+	else if (param == "--encode")
 	{
 		//BASE64
 		//https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/nf-wincrypt-cryptbinarytostringa
@@ -122,11 +124,11 @@ int main(int argc, char* argv[])
 		for (int i = 2; i < argc; i++)
 		{
 			text += argv[i];
-			if (i != argc-1) text += " ";
+			if (i != argc - 1) text += " ";
 		}
 
 		DWORD encodedSize = 0; //Dword 32 bitai unsigned integer
-		
+
 		//pirmas callas, kad suzinot kokio dydzio buferio reikia encoded tekstui
 		CryptBinaryToStringA(
 			(BYTE*)text.c_str(), //basically stringa type castinam i byte pointeri, nes sita funkcija gali convertuoti tik BYTE tipo duomenis, o text.c_str() grazina charo masyva is stringo
@@ -148,7 +150,11 @@ int main(int argc, char* argv[])
 			&encodedSize
 		);
 
-		cout <<"|"<< text <<"|"<< " -> " << encodedText << endl;
+		cout << "|" << text << "|" << " -> " << encodedText << endl;
+	}
+	else
+	{
+		cout << param << " <- Parameter unknown\n";
 	}
 
 }
