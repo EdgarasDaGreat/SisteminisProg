@@ -3,41 +3,32 @@
 #include <stdlib.h>
 #include <conio.h>
 
-// ============================================================================
-// SHARED MEMORY STRUCTURES AND CONSTANTS
-// ============================================================================
-
 //Trumpiniai
 #define SHARED_MEM_NAME "ProducerConsumer_SharedMem"
 #define MUTEX_NAME "ProducerConsumer_Mutex"
 #define SEMAPHORE_NAME "ProducerConsumer_Semaphore"
+#define EVENT_NAME "ProducerConsumer_Event"
 #define TASK_QUEUE_SIZE 1000
 
 
-// Task structure
+//Taskas - aka skaicius kuri tikrins ar cia prime. Galima ir be sito apsieiti drasiai
 struct Task {
     long long number;
 };
 
 // Shared buffer - resides in shared memory
 struct SharedBuffer {
-    Task queue[TASK_QUEUE_SIZE];      // Array to hold 1000 tasks
-    int queueStart;                   // Index where we READ from
-    int queueEnd;                     // Index where we WRITE to
-    int queueCount;                   // How many tasks are in queue
+    Task queue[TASK_QUEUE_SIZE];      //Masyvas 1000 elementu
+    int queueStart;                   //Indexas nuo kur skaitom taskus
+    int queueEnd;                     //Indexas kur rasom naujus taskus
+    int queueCount;                   //Kiek tasku eilej
     
-    long long minPrime;               // Smallest prime found
-    long long maxPrime;               // Largest prime found
-    BOOL resultsInitialized;          // Have we found any primes yet?
-    
-    BOOL producerDone;                // Did producer finish?
+    long long minPrime;               //Maziausias primas rastas
+    long long maxPrime;               //Didziausas primas rastas
+    BOOL resultsInitialized;          //Ar mes radom prime?
 };
 
-// ============================================================================
-// UTILITY FUNCTIONS
-// ============================================================================
-
-// Simple prime checking function
+//Funkcija prime tikrina
 BOOL IsPrime(long long num) {
     if (num < 2) return FALSE;
     if (num == 2 || num == 3) return TRUE;
@@ -49,34 +40,29 @@ BOOL IsPrime(long long num) {
     return TRUE;
 }
 
-// ============================================================================
-// PRODUCER PROCESS
-// ============================================================================
-
+//Produceris
 void RunProducer() {
     printf("PRODUCER: Starting...\n");
     
-    // Open shared memory
+	//Atidarom bendra atminties objekta
+    //Gali ir skaitti rasyti/nepaveldi vaikiniai procesai, pavadinimas kuriuo ieskom atminties gabalo
     HANDLE hSharedMem = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, SHARED_MEM_NAME);
     if (!hSharedMem) {
         printf("PRODUCER: Failed to open shared memory\n");
         return;
     }
-    
-    SharedBuffer* shared = (SharedBuffer*)MapViewOfFile(
-        hSharedMem,              // Which shared memory?
-        FILE_MAP_ALL_ACCESS,     // Full read/write permission
-        0, 0, 0                  // Map the entire thing from start
-    );
+    //pointeris i atminties gabala
+    SharedBuffer* shared = (SharedBuffer*)MapViewOfFile(hSharedMem, FILE_MAP_ALL_ACCESS, 0, 0, 0);
     if (!shared) {
         printf("PRODUCER: Failed to map shared memory\n");
         CloseHandle(hSharedMem);
         return;
     }
     
-    // Open synchronization objects
+    //Atidarom mutexa
     HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, MUTEX_NAME);
-    HANDLE hSem = OpenSemaphoreA(SYNCHRONIZE, FALSE, SEMAPHORE_NAME);
+	//Atidarom semafora, turi teise sinchronizuotis ir modifikuoti semafora
+    HANDLE hSem = OpenSemaphoreA(SEMAPHORE_MODIFY_STATE | SYNCHRONIZE, FALSE, SEMAPHORE_NAME);
     
     if (!hMutex || !hSem) {
         printf("PRODUCER: Failed to open synchronization objects\n");
@@ -85,11 +71,10 @@ void RunProducer() {
         return;
     }
     
-    // Scan rand_files directory
+    //Pasiziurim ar turim failu direktorijoj
     WIN32_FIND_DATAA findData;
     HANDLE findHandle;
     char searchPath[MAX_PATH];
-    char filePath[MAX_PATH];
     
     GetCurrentDirectoryA(MAX_PATH, searchPath);
     strcat_s(searchPath, MAX_PATH, "\\rand_files");
@@ -98,10 +83,14 @@ void RunProducer() {
     findHandle = FindFirstFileA(searchPath, &findData);
     if (findHandle == INVALID_HANDLE_VALUE) {
         printf("PRODUCER: No files found in rand_files directory\n");
-        WaitForSingleObject(hMutex, INFINITE);
-        shared->producerDone = TRUE;
-        ReleaseMutex(hMutex);
-        ReleaseSemaphore(hSem, 1, NULL);
+        
+        //Reikia eventa producerio ijungt, kad uzsibaigtu programa
+        HANDLE hEvent = OpenEventA(EVENT_MODIFY_STATE, FALSE, EVENT_NAME);
+        if (hEvent) {
+            SetEvent(hEvent);
+            CloseHandle(hEvent);
+        }
+        
         UnmapViewOfFile(shared);
         CloseHandle(hSharedMem);
         CloseHandle(hMutex);
@@ -111,10 +100,10 @@ void RunProducer() {
     
     int filesProcessed = 0;
     
-    // Process each file
+    //Visus failus apdoroti
     do {
-        if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-            // Build full file path
+        if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) { //patikrina ar nera failas direktorija (papke)
+            //cia sukuria pilna failo kelia i fullPath
             char fullPath[MAX_PATH];
             char dirPath[MAX_PATH];
             GetCurrentDirectoryA(MAX_PATH, dirPath);
@@ -122,87 +111,86 @@ void RunProducer() {
             strcpy_s(fullPath, MAX_PATH, dirPath);
             strcat_s(fullPath, MAX_PATH, findData.cFileName);
             
-            // Open and read file
             HANDLE hFile = CreateFileA(fullPath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
             if (hFile != INVALID_HANDLE_VALUE) {
-                DWORD fileSize = GetFileSize(hFile, NULL);
-                char* buffer = (char*)malloc(fileSize + 1);
-                
-                if (buffer) {
+                DWORD fileSize = GetFileSize(hFile, NULL); //gaunam failo dydi
+                char* buffer = (char*)malloc(fileSize + 1); //alokuojam jam atminties
+
+                if (buffer) {//Jei atmintis alokuota
                     DWORD bytesRead;
-                    ReadFile(hFile, buffer, fileSize, &bytesRead, NULL);
-                    buffer[bytesRead] = '\0';
-                    
-                    // Parse numbers from file
+					ReadFile(hFile, buffer, fileSize, &bytesRead, NULL); //nuskaitom faila i bufferi
+                    buffer[bytesRead] = '\0'; //paverciam i stringa viska
+
                     long long num;
                     char* context = NULL;
-                    char* token = strtok_s(buffer, " \t\n\r", &context);
-                    
+                    char* token = strtok_s(buffer, " \t\n\r", &context); //Isskaido bufery esanti stringa pagal delimiterius ir nurodo i pirma token pointeri
+
                     while (token) {
-                        if (sscanf_s(token, "%lld", &num) == 1) {
-                            // Add to queue with mutex protection - RETRY until added
+                        if (sscanf_s(token, "%lld", &num) == 1) { //converuoja tokena i longlonga
                             BOOL added = FALSE;
                             while (!added) {
-                                WaitForSingleObject(hMutex, INFINITE);
-                                
-                                if (shared->queueCount < TASK_QUEUE_SIZE) {
-                                    shared->queue[shared->queueEnd].number = num;
-                                    shared->queueEnd = (shared->queueEnd + 1) % TASK_QUEUE_SIZE;
-                                    shared->queueCount++;
-                                    
-                                    ReleaseMutex(hMutex);
-                                    ReleaseSemaphore(hSem, 1, NULL); // Signal task available
-                                    added = TRUE;
-                                } else {
-                                    ReleaseMutex(hMutex);
-                                    Sleep(10); // Queue full, wait and RETRY
+                                WaitForSingleObject(hMutex, INFINITE);//uzrakinam mutexa, kad neoverlapintu duomenys
+
+                                if (shared->queueCount < TASK_QUEUE_SIZE) {//tikrina ar yra vietos
+                                    shared->queue[shared->queueEnd].number = num;//ideda skaiciu
+                                    shared->queueEnd = (shared->queueEnd + 1) % TASK_QUEUE_SIZE; //apsisaugom kad uz ribu neiseituma ir pastumiam gala
+									shared->queueCount++; //padidina tasku skaiciu
+
+                                    ReleaseMutex(hMutex); //paleidziam mutexa
+                                    ReleaseSemaphore(hSem, 1, NULL); //signalizuojam consumeriams kad yra ka veikt eilej
+                                    added = TRUE; //flagas kad pridejom
+                                }
+                                else {
+                                    ReleaseMutex(hMutex); //Kol neprideta paleidziam atgal mutexa
+                                    Sleep(10); //laukiam 10ms ir bandom vel rakint ir pridet
                                 }
                             }
                         }
-                        token = strtok_s(NULL, " \t\n\r", &context);
+                        token = strtok_s(NULL, " \t\n\r", &context);//imam sekanti tokena (NULL nurodo tesiam kur baigem)
                     }
-                    
-                    free(buffer);
+
+                    free(buffer); //atlaisvinam buferio atminti (nes malloc)
                 }
-                CloseHandle(hFile);
-                filesProcessed++;
-                
+                CloseHandle(hFile);//uzdarom failo handle kai nebeliko tokenu ten
+				filesProcessed++; //padidina apdorotu failu skaiciu (grnj skaitliukui)
+
                 if (filesProcessed % 100 == 0) {
                     printf("PRODUCER: Processed %d files...\n", filesProcessed);
                 }
             }
+            else
+                printf("File was not open for reading. Skipping...");
         }
-    } while (FindNextFileA(findHandle, &findData));
+	} while (FindNextFileA(findHandle, &findData)); //imam sekanti faila ir kartojam procesa kol nebeliks failu
     
-    FindClose(findHandle);
+    FindClose(findHandle);//uzdarom direktorijos handle
     
-    // Signal that producer is done
-    WaitForSingleObject(hMutex, INFINITE);
-    shared->producerDone = TRUE;
-    ReleaseMutex(hMutex);
+    //Producerio eventas kad baige darba
+    HANDLE hEvent = OpenEventA(EVENT_MODIFY_STATE, FALSE, EVENT_NAME);
+    if (hEvent) {
+        SetEvent(hEvent);
+        CloseHandle(hEvent);
+    }
     
-    // Wake up consumers
+    //Pasibaigus produceriui, signalizuoja consumeriams 10 fantominiu skaiciu, kad jie pabustu ir uzbaigtu darba
     for (int i = 0; i < 10; i++) {
         ReleaseSemaphore(hSem, 1, NULL);
     }
     
     printf("PRODUCER: Finished. Processed %d files.\n", filesProcessed);
     
-    // Cleanup
+    //Apsitvarko handles
     UnmapViewOfFile(shared);
     CloseHandle(hSharedMem);
     CloseHandle(hMutex);
     CloseHandle(hSem);
 }
 
-// ============================================================================
-// CONSUMER PROCESS
-// ============================================================================
-
+//Consumeris
 void RunConsumer() {
     printf("CONSUMER (PID %lu): Starting...\n", GetCurrentProcessId());
     
-    // Open shared memory
+	//tas pats kaip su produceriu, atidarom shared memory ir synchronization objects (cia dar evento reik)
     HANDLE hSharedMem = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, SHARED_MEM_NAME);
     if (!hSharedMem) {
         printf("CONSUMER: Failed to open shared memory\n");
@@ -216,11 +204,11 @@ void RunConsumer() {
         return;
     }
     
-    // Open synchronization objects
     HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, MUTEX_NAME);
-    HANDLE hSem = OpenSemaphoreA(SYNCHRONIZE, FALSE, SEMAPHORE_NAME);
+    HANDLE hSem = OpenSemaphoreA(SEMAPHORE_MODIFY_STATE | SYNCHRONIZE, FALSE, SEMAPHORE_NAME);
+    HANDLE hEvent = OpenEventA(SYNCHRONIZE, FALSE, EVENT_NAME);
     
-    if (!hMutex || !hSem) {
+    if (!hMutex || !hSem || !hEvent) {
         printf("CONSUMER: Failed to open synchronization objects\n");
         UnmapViewOfFile(shared);
         CloseHandle(hSharedMem);
@@ -229,70 +217,65 @@ void RunConsumer() {
     
     int tasksProcessed = 0;
     
-    // Main consumer loop
+    //Handle masyvas su eventu ir semaforu
+    HANDLE waitHandles[2] = { hSem, hEvent };
+    
     while (TRUE) {
-        // Always check queue first, don't rely only on semaphore
-        WaitForSingleObject(hMutex, INFINITE);
+        //Laukia semaphore (nauja uzduotis) ARBA event (producer baige)
+        //cia false pasako laukiam arba to arba to
+        DWORD result = WaitForMultipleObjects(2, waitHandles, FALSE, INFINITE);
         
-        if (shared->queueCount > 0) {
-            // Get task from queue
-            Task task = shared->queue[shared->queueStart];
-            shared->queueStart = (shared->queueStart + 1) % TASK_QUEUE_SIZE;
-            shared->queueCount--;
+        WaitForSingleObject(hMutex, INFINITE);//Laukiam mutexo
+        
+        if (shared->queueCount > 0) {//jei yra uzduotciu
+            Task task = shared->queue[shared->queueStart];//paima uzduoti is eiles priekio
+            shared->queueStart = (shared->queueStart + 1) % TASK_QUEUE_SIZE;//pastumia starto buferi (vel su ciklline apsauga)
+            shared->queueCount--;//uzduociu skaitliuka sumazina
             
-            ReleaseMutex(hMutex);
+            ReleaseMutex(hMutex);//paleidzia mutexa
             
-            // Check if prime
-            if (IsPrime(task.number)) {
-                WaitForSingleObject(hMutex, INFINITE);
+            //Apdirba skaiciu (ar prime)
+            if (IsPrime(task.number)) {//jeigu prime
+                WaitForSingleObject(hMutex, INFINITE);//imam mutexa
                 
-                if (!shared->resultsInitialized) {
+                if (!shared->resultsInitialized) {//jei nebuvo rezultatu tai irasom skaiciu tiek i min tiek i max
                     shared->minPrime = task.number;
                     shared->maxPrime = task.number;
-                    shared->resultsInitialized = TRUE;
+                    shared->resultsInitialized = TRUE;//flagas kad radom rezultata
                 } else {
-                    if (task.number < shared->minPrime) {
-                        shared->minPrime = task.number;
-                    }
-                    if (task.number > shared->maxPrime) {
-                        shared->maxPrime = task.number;
-                    }
+                    if (task.number < shared->minPrime) shared->minPrime = task.number;//Tikrinam ar skaicius mazesnis uz min
+                    if (task.number > shared->maxPrime) shared->maxPrime = task.number;//Tikrinam ar skaicius didesnis uz max
                 }
                 
-                ReleaseMutex(hMutex);
+                ReleaseMutex(hMutex);//paleidziam mutexa
             }
             
-            tasksProcessed++;
+            tasksProcessed++; //statsam kiek koks procesas apdorojo uzduociu
         } else {
-            ReleaseMutex(hMutex);
+            //Jei eile tuscia, tikrina ar producer baige
+			ReleaseMutex(hMutex);//paleidziam mutexa ir tikrinam eventa
             
-            // Queue empty - check if done
-            WaitForSingleObject(hMutex, INFINITE);
-            BOOL done = shared->producerDone && shared->queueCount == 0;
-            ReleaseMutex(hMutex);
-            
-            if (done) {
-                printf("CONSUMER (PID %lu): Producer finished. Exiting. Processed %d tasks.\n", GetCurrentProcessId(), tasksProcessed);
+            DWORD eventState = WaitForSingleObject(hEvent, 0);
+            if (eventState == WAIT_OBJECT_0 && shared->queueCount == 0) {//jei baigesi eile (tuscia) ir eventas produserio baigesi
+                printf("CONSUMER (PID %lu): Producer finished. Processed %d tasks.\n", 
+                       GetCurrentProcessId(), tasksProcessed);
                 break;
             }
-            
-            Sleep(10);  // Brief sleep to avoid busy-waiting
+            continue;//griztam i loopa jeigu nesibaige
         }
     }
     
     printf("CONSUMER (PID %lu): Finished.\n", GetCurrentProcessId());
     
-    // Cleanup
+    //Apsivalom
     UnmapViewOfFile(shared);
     CloseHandle(hSharedMem);
     CloseHandle(hMutex);
     CloseHandle(hSem);
+    CloseHandle(hEvent);
 }
 
-// ============================================================================
-// MAIN CONTROLLER
-// ============================================================================
-
+//Main controleris
 int main(int argc, char* argv[]) {
     // Check if this is a worker process
     if (argc > 1) {
@@ -312,7 +295,7 @@ int main(int argc, char* argv[]) {
     
     // Create shared memory
     HANDLE hSharedMem = CreateFileMappingA(
-		INVALID_HANDLE_VALUE, //Naudok atminties faila, o ne tikra faila (RAM)
+		INVALID_HANDLE_VALUE, //Naudok atminties faila (RAM), o ne tikra faila
 		NULL, //defaultine apsauga
 		PAGE_READWRITE, //Visi gali skaityti ir rasyti
         0, //kazkoks nereikalingas flagas
@@ -342,8 +325,14 @@ int main(int argc, char* argv[]) {
 	//NULL - default apsauga, 0 - pradzioj tuscia eile, TASK_QUEUE_SIZE - maksimalus tasku skaicius, SEMAPHORE_NAME - semaforo pavadinimas
     //skaitliukas
     HANDLE hSem = CreateSemaphoreA(NULL, 0, TASK_QUEUE_SIZE, SEMAPHORE_NAME);
-    
-    if (!hMutex || !hSem) {
+    HANDLE hEvent = CreateEventA(
+        NULL,   // Default security
+        TRUE,   // Manual reset (neišsijungia automatiškai)
+        FALSE,  // Initial state = nesignalizuota
+        EVENT_NAME
+    );
+
+    if (!hMutex || !hSem || !hEvent) {
         printf("Failed to create synchronization objects\n");
         UnmapViewOfFile(shared);
         CloseHandle(hSharedMem);
@@ -395,8 +384,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    //CIA BAIGIOAU
-    // Main loop
+    //Main loop
     DWORD lastDisplay = GetTickCount();
     
     while (TRUE) {
@@ -438,7 +426,10 @@ int main(int argc, char* argv[]) {
                 } else {
                     printf("(No primes found yet)\n");
                 }
-                printf("Producer done: %s\n", shared->producerDone ? "YES" : "NO");
+                
+                DWORD eventState = WaitForSingleObject(hEvent, 0);
+                printf("Producer done: %s\n", (eventState == WAIT_OBJECT_0) ? "YES" : "NO");
+                
                 printf("---------------\n\n");
                 ReleaseMutex(hMutex);
             }
@@ -448,9 +439,9 @@ int main(int argc, char* argv[]) {
             }
         }
         
-        // Display results periodically
+		//kas 2 sekundes atvaizduoja esama situacija (eile, consumeriu skaicius, ir min max primes)
         DWORD now = GetTickCount();
-        if (now - lastDisplay > 5000) {
+        if (now - lastDisplay > 2000) {
             WaitForSingleObject(hMutex, INFINITE);
             printf("[Queue: %d | Consumers: %d | ", shared->queueCount, numConsumers);
             if (shared->resultsInitialized) {
@@ -463,17 +454,26 @@ int main(int argc, char* argv[]) {
             lastDisplay = now;
         }
         
-        // Check if producer finished
-        if (WaitForSingleObject(producerProc, 0) == WAIT_OBJECT_0) {
-            printf("Producer finished. Waiting for consumers...\n");
-            WaitForSingleObject(hMutex, 5000);
+        //patikrina ar produceris baige
+        if (WaitForSingleObject(hEvent, 0) == WAIT_OBJECT_0) {
+            printf("Producer finished. Waiting 10s for consumers to finish...\n");
+            
+            // Laukia max 10 sekundziu
+            DWORD result = WaitForMultipleObjects(numConsumers, consumers, TRUE, 10000);
+            
+            if (result == WAIT_TIMEOUT) {
+                printf("Warning: Some consumers didn't finish in time. Forcing shutdown.\n");
+            } else {
+                printf("All consumers finished successfully.\n");
+            }
+            
             break;
         }
         
         Sleep(100);
     }
     
-    // Terminate all processes
+    //Visus procesus uzdaro
     for (int i = 0; i < numConsumers; i++) {
         TerminateProcess(consumers[i], 0);
         WaitForSingleObject(consumers[i], INFINITE);
@@ -484,7 +484,7 @@ int main(int argc, char* argv[]) {
     WaitForSingleObject(producerProc, INFINITE);
     CloseHandle(producerProc);
     
-    // Final results
+    //Rezultatai
     printf("\n=== FINAL RESULTS ===\n");
     if (shared->resultsInitialized) {
         printf("Minimum Prime: %lld\n", shared->minPrime);
@@ -494,11 +494,12 @@ int main(int argc, char* argv[]) {
     }
     printf("=====================\n");
     
-    // Cleanup
+    //Sutvarko handle
     UnmapViewOfFile(shared);
     CloseHandle(hSharedMem);
     CloseHandle(hMutex);
     CloseHandle(hSem);
+    CloseHandle(hEvent);
     
     return 0;
 }
