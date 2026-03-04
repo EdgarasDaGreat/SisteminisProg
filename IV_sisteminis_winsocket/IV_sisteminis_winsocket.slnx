@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="IV_sisteminis_winsocket/IV_sisteminis_winsocket.vcxproj" />
+</Solution>
