@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="IV_sisteminis_winsocket/IV_sisteminis_winsocket.vcxproj" />
+  <Project Path="IV_sisteminis_winsocket/IV_sisteminis_winsocket.vcxproj" Id="18150837-a0f2-4411-b6d6-a7af39a36c83" />
 </Solution>
